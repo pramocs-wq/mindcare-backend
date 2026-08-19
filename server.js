@@ -4,7 +4,6 @@ const db = require('./db');
 
 const app = express();
 
-// Explicit CORS headers
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
@@ -26,26 +25,27 @@ app.get('/api/appointments', async (req, res) => {
   }
 });
 
-// POST: Create appointment (Fixed column name to client_name)
+// POST: Create appointment
 app.post('/api/appointments', async (req, res) => {
   try {
     const body = req.body;
-    const client_name = body.full_name || body.client_name || body.name || body.client;
-    const counselor_name = body.counselor_name || body.counselor || body.doctor_name || body.doctor || '';
-    const phone = body.phone || body.phone_number || body.mobile || body.contact || '';
-    const appointment_time = body.appointment_time || body.appointment_date || body.date_time || body.date;
-    const notes = body.notes || body.message || '';
+    const clientName = body.full_name || body.client_name || body.name || body.client || '';
+    const counselorName = body.counselor_name || body.counselor || body.doctor_name || body.doctor || '';
+    const phoneNumber = body.phone || body.phone_number || body.mobile || body.contact || '';
+    const appointmentTime = body.appointment_time || body.appointment_date || body.date_time || body.date || '';
+    const notesText = body.notes || body.message || '';
 
-    if (!client_name) {
+    if (!clientName) {
       return res.status(400).json({ error: "Client name is required" });
     }
 
+    // Dynamic insert query matching common MySQL column layouts
     const query = `
-      INSERT INTO appointments (client_name, counselor_name, phone, appointment_time, notes)
+      INSERT INTO appointments (name, counselor, phone, appointment_time, notes)
       VALUES (?, ?, ?, ?, ?)
     `;
 
-    const [result] = await db.query(query, [client_name, counselor_name, phone, appointment_time, notes]);
+    const [result] = await db.query(query, [clientName, counselorName, phoneNumber, appointmentTime, notesText]);
     res.status(201).json({ message: "Appointment booked successfully!", id: result.insertId });
   } catch (err) {
     console.error("Database Insert Error:", err);
