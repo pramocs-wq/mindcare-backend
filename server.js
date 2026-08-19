@@ -13,35 +13,48 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// GET: Fetch appointments with JOIN fallback for user names
+// GET: Standardize returned keys so admin.html reads values instantly
 app.get('/api/appointments', async (req, res) => {
   try {
-    // Check if users table exists to join patient details
-    const [tables] = await db.query(`SHOW TABLES LIKE 'users'`);
-    let query = `SELECT * FROM appointments ORDER BY id DESC`;
-
-    if (tables.length > 0) {
-      query = `
-        SELECT 
-          a.*, 
-          u.name AS user_name, 
-          u.phone AS user_phone,
-          u.email AS user_email
-        FROM appointments a
-        LEFT JOIN users u ON a.patient_id = u.id
-        ORDER BY a.id DESC
-      `;
+    const [rows] = await db.query(`SELECT * FROM appointments ORDER BY id DESC`);
+    
+    // Check if a users table exists for name lookups
+    let usersMap = {};
+    try {
+      const [uRows] = await db.query(`SELECT * FROM users`);
+      uRows.forEach(u => { usersMap[u.id] = u; });
+    } catch (e) {
+      // Ignore if users table doesn't exist
     }
 
-    const [results] = await db.query(query);
-    res.json(results);
+    const standardized = rows.map(app => {
+      // Extract linked user if patient_id exists
+      const linkedUser = app.patient_id ? usersMap[app.patient_id] : null;
+
+      const clientName = app.client_name || app.patient_name || app.full_name || app.client || app.name || (linkedUser ? linkedUser.name : null) || 'N/A';
+      const phone = app.phone || app.phone_number || app.mobile || app.contact || (linkedUser ? linkedUser.phone : null) || 'N/A';
+      const counselor = app.counselor_name || app.counselor || app.doctor_name || app.doctor || 'N/A';
+      const rawDate = app.appointment_time || app.appointment_date || app.date_time || app.date || '';
+      const notes = app.notes || app.message || app.description || '';
+
+      return {
+        id: app.id,
+        client_name: clientName,
+        phone: phone,
+        counselor_name: counselor,
+        appointment_time: rawDate,
+        notes: notes
+      };
+    });
+
+    res.json(standardized);
   } catch (err) {
     console.error("Fetch Error:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// POST: Save appointment & update linked user profile
+// POST: Save appointment
 app.post('/api/appointments', async (req, res) => {
   try {
     const body = req.body;
@@ -51,22 +64,20 @@ app.post('/api/appointments', async (req, res) => {
     const timeVal = body.appointment_time || body.appointment_date || body.date_time || body.date || '';
     const notesVal = body.notes || body.message || '';
 
-    // Step 1: Insert or update user record to capture name & phone number
+    // Step 1: Manage linked user
     let validUserId = 1;
     try {
-      const [userInsert] = await db.query(
+      const [uInsert] = await db.query(
         `INSERT INTO users (name, phone) VALUES (?, ?) ON DUPLICATE KEY UPDATE name=VALUES(name), phone=VALUES(phone)`,
         [clientVal || 'Guest User', phoneVal || '']
       );
-      validUserId = userInsert.insertId || userInsert.id || 1;
+      validUserId = uInsert.insertId || 1;
     } catch (uErr) {
-      console.warn("Users table write note:", uErr.message);
-      // Fallback: pick existing user ID
       const [uRows] = await db.query(`SELECT id FROM users LIMIT 1`);
       if (uRows.length > 0) validUserId = uRows[0].id;
     }
 
-    // Step 2: Dynamically map appointment fields
+    // Step 2: Map columns dynamically
     const [columns] = await db.query(`SHOW COLUMNS FROM appointments`);
     const colNames = columns.map(c => c.Field);
 
@@ -74,7 +85,6 @@ app.post('/api/appointments', async (req, res) => {
     let insertVals = [];
     let placeholders = [];
 
-    // Map foreign key fields
     if (colNames.includes('patient_id')) {
       insertCols.push('patient_id');
       insertVals.push(validUserId);
@@ -87,7 +97,6 @@ app.post('/api/appointments', async (req, res) => {
       placeholders.push('?');
     }
 
-    // Map direct text columns if present
     let nameCol = colNames.find(c => ['client_name', 'patient_name', 'full_name', 'client', 'name'].includes(c) && !c.endsWith('_id'));
     let counselorCol = colNames.find(c => ['counselor_name', 'counselor', 'doctor_name', 'doctor'].includes(c) && !c.endsWith('_id'));
     let phoneCol = colNames.find(c => ['phone', 'phone_number', 'mobile', 'contact'].includes(c));
@@ -110,21 +119,14 @@ app.post('/api/appointments', async (req, res) => {
   }
 });
 
-// DELETE: Remove appointment by ID
+// DELETE: Remove appointment
 app.delete('/api/appointments/:id', async (req, res) => {
   try {
     const appointmentId = req.params.id;
+    if (!appointmentId) return res.status(400).json({ error: "Missing appointment ID" });
 
-    if (!appointmentId) {
-      return res.status(400).json({ error: "Missing appointment ID" });
-    }
-
-    const query = `DELETE FROM appointments WHERE id = ?`;
-    const [result] = await db.query(query, [appointmentId]);
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: "Appointment not found" });
-    }
+    const [result] = await db.query(`DELETE FROM appointments WHERE id = ?`, [appointmentId]);
+    if (result.affectedRows === 0) return res.status(404).json({ error: "Appointment not found" });
 
     return res.status(200).json({ success: true, message: "Appointment deleted successfully" });
   } catch (err) {
@@ -134,6 +136,4 @@ app.delete('/api/appointments/:id', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
