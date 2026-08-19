@@ -4,7 +4,7 @@ const db = require('./db');
 
 const app = express();
 
-// Allow all origins and HTTP methods explicitly
+// Explicit CORS headers
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
@@ -55,7 +55,7 @@ app.post('/api/appointments', (req, res) => {
 // DELETE: Remove appointment by ID
 app.delete('/api/appointments/:id', (req, res) => {
   const appointmentId = req.params.id;
-  
+
   if (!appointmentId) {
     return res.status(400).json({ error: "Missing appointment ID" });
   }
@@ -64,15 +64,15 @@ app.delete('/api/appointments/:id', (req, res) => {
 
   db.query(query, [appointmentId], (err, result) => {
     if (err) {
-      console.error("Delete Database Error:", err);
+      console.error("Delete Error:", err);
       return res.status(500).json({ error: err.message });
     }
-    
+
     if (result.affectedRows === 0) {
-      return res.status(404).json({ error: "Appointment record not found in database" });
+      return res.status(404).json({ error: "Appointment not found" });
     }
 
-    return res.status(200).json({ success: true, message: "Appointment deleted successfully" });
+    return res.status(200).json({ success: true, message: "Appointment deleted" });
   });
 });
 
