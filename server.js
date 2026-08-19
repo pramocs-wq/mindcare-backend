@@ -13,10 +13,26 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// GET: Fetch all appointments
+// GET: Fetch appointments with JOIN fallback for user names
 app.get('/api/appointments', async (req, res) => {
   try {
-    const query = `SELECT * FROM appointments ORDER BY id DESC`;
+    // Check if users table exists to join patient details
+    const [tables] = await db.query(`SHOW TABLES LIKE 'users'`);
+    let query = `SELECT * FROM appointments ORDER BY id DESC`;
+
+    if (tables.length > 0) {
+      query = `
+        SELECT 
+          a.*, 
+          u.name AS user_name, 
+          u.phone AS user_phone,
+          u.email AS user_email
+        FROM appointments a
+        LEFT JOIN users u ON a.patient_id = u.id
+        ORDER BY a.id DESC
+      `;
+    }
+
     const [results] = await db.query(query);
     res.json(results);
   } catch (err) {
@@ -25,7 +41,7 @@ app.get('/api/appointments', async (req, res) => {
   }
 });
 
-// POST: Create appointment with Foreign Key resolution
+// POST: Save appointment & update linked user profile
 app.post('/api/appointments', async (req, res) => {
   try {
     const body = req.body;
@@ -35,25 +51,22 @@ app.post('/api/appointments', async (req, res) => {
     const timeVal = body.appointment_time || body.appointment_date || body.date_time || body.date || '';
     const notesVal = body.notes || body.message || '';
 
-    // Step A: Find a valid user ID from the `users` table to satisfy foreign key
-    let validUserId = null;
+    // Step 1: Insert or update user record to capture name & phone number
+    let validUserId = 1;
     try {
-      const [userRows] = await db.query(`SELECT id FROM users LIMIT 1`);
-      if (userRows.length > 0) {
-        validUserId = userRows[0].id;
-      } else {
-        // If users table is empty, insert a fallback guest record
-        const [newUser] = await db.query(
-          `INSERT INTO users (name, phone) VALUES (?, ?)`, 
-          [clientVal || 'Guest User', phoneVal || '0000000000']
-        );
-        validUserId = newUser.insertId;
-      }
+      const [userInsert] = await db.query(
+        `INSERT INTO users (name, phone) VALUES (?, ?) ON DUPLICATE KEY UPDATE name=VALUES(name), phone=VALUES(phone)`,
+        [clientVal || 'Guest User', phoneVal || '']
+      );
+      validUserId = userInsert.insertId || userInsert.id || 1;
     } catch (uErr) {
-      console.warn("User lookup warning:", uErr.message);
+      console.warn("Users table write note:", uErr.message);
+      // Fallback: pick existing user ID
+      const [uRows] = await db.query(`SELECT id FROM users LIMIT 1`);
+      if (uRows.length > 0) validUserId = uRows[0].id;
     }
 
-    // Step B: Inspect appointments column layout
+    // Step 2: Dynamically map appointment fields
     const [columns] = await db.query(`SHOW COLUMNS FROM appointments`);
     const colNames = columns.map(c => c.Field);
 
@@ -61,21 +74,20 @@ app.post('/api/appointments', async (req, res) => {
     let insertVals = [];
     let placeholders = [];
 
-    // Map Foreign Keys to validUserId or skip if nullable
-    if (colNames.includes('patient_id') && validUserId) {
+    // Map foreign key fields
+    if (colNames.includes('patient_id')) {
       insertCols.push('patient_id');
       insertVals.push(validUserId);
       placeholders.push('?');
     }
-    
+
     if (colNames.includes('doctor_id')) {
-      // Find valid doctor ID or use same user ID fallback
       insertCols.push('doctor_id');
-      insertVals.push(validUserId || 1);
+      insertVals.push(1);
       placeholders.push('?');
     }
 
-    // Dynamic field matching for text/date fields
+    // Map direct text columns if present
     let nameCol = colNames.find(c => ['client_name', 'patient_name', 'full_name', 'client', 'name'].includes(c) && !c.endsWith('_id'));
     let counselorCol = colNames.find(c => ['counselor_name', 'counselor', 'doctor_name', 'doctor'].includes(c) && !c.endsWith('_id'));
     let phoneCol = colNames.find(c => ['phone', 'phone_number', 'mobile', 'contact'].includes(c));
