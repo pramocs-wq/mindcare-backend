@@ -4,6 +4,7 @@ const db = require('./db');
 
 const app = express();
 
+// Explicit CORS headers
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
@@ -25,26 +26,26 @@ app.get('/api/appointments', async (req, res) => {
   }
 });
 
-// POST: Create appointment
+// POST: Create appointment (Fixed column name to client_name)
 app.post('/api/appointments', async (req, res) => {
   try {
     const body = req.body;
-    const full_name = body.full_name || body.client_name || body.name || body.client;
-    const counselor_name = body.counselor_name || body.counselor || body.doctor_name || body.doctor;
-    const phone = body.phone || body.phone_number || body.mobile || body.contact;
+    const client_name = body.full_name || body.client_name || body.name || body.client;
+    const counselor_name = body.counselor_name || body.counselor || body.doctor_name || body.doctor || '';
+    const phone = body.phone || body.phone_number || body.mobile || body.contact || '';
     const appointment_time = body.appointment_time || body.appointment_date || body.date_time || body.date;
     const notes = body.notes || body.message || '';
 
-    if (!full_name) {
+    if (!client_name) {
       return res.status(400).json({ error: "Client name is required" });
     }
 
     const query = `
-      INSERT INTO appointments (full_name, counselor_name, phone, appointment_time, notes)
+      INSERT INTO appointments (client_name, counselor_name, phone, appointment_time, notes)
       VALUES (?, ?, ?, ?, ?)
     `;
 
-    const [result] = await db.query(query, [full_name, counselor_name, phone, appointment_time, notes]);
+    const [result] = await db.query(query, [client_name, counselor_name, phone, appointment_time, notes]);
     res.status(201).json({ message: "Appointment booked successfully!", id: result.insertId });
   } catch (err) {
     console.error("Database Insert Error:", err);
