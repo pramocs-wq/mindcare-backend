@@ -35,20 +35,27 @@ app.post('/api/appointments', async (req, res) => {
     const timeVal = body.appointment_time || body.appointment_date || body.date_time || body.date || '';
     const notesVal = body.notes || body.message || '';
 
-    // Inspect table structure
+    // Inspect database columns
     const [columns] = await db.query(`SHOW COLUMNS FROM appointments`);
     const colNames = columns.map(c => c.Field);
-
-    // Filter out INT ID columns to prevent integer mismatch
-    let nameCol = colNames.find(c => ['client_name', 'patient_name', 'full_name', 'client', 'name'].includes(c) && !c.endsWith('_id'));
-    let counselorCol = colNames.find(c => ['counselor_name', 'counselor', 'doctor_name', 'doctor'].includes(c) && !c.endsWith('_id'));
-    let phoneCol = colNames.find(c => ['phone', 'phone_number', 'mobile', 'contact'].includes(c));
-    let timeCol = colNames.find(c => ['appointment_date', 'appointment_time', 'date_time', 'date'].includes(c));
-    let notesCol = colNames.find(c => ['notes', 'message', 'description'].includes(c));
 
     let insertCols = [];
     let insertVals = [];
     let placeholders = [];
+
+    // Check if patient_id is required by schema
+    if (colNames.includes('patient_id')) {
+      insertCols.push('patient_id');
+      insertVals.push(0); // Dummy integer ID to satisfy required constraint
+      placeholders.push('?');
+    }
+
+    // Match text and data fields
+    let nameCol = colNames.find(c => ['client_name', 'patient_name', 'full_name', 'client', 'name'].includes(c) && c !== 'patient_id');
+    let counselorCol = colNames.find(c => ['counselor_name', 'counselor', 'doctor_name', 'doctor'].includes(c) && !c.endsWith('_id'));
+    let phoneCol = colNames.find(c => ['phone', 'phone_number', 'mobile', 'contact'].includes(c));
+    let timeCol = colNames.find(c => ['appointment_date', 'appointment_time', 'date_time', 'date'].includes(c));
+    let notesCol = colNames.find(c => ['notes', 'message', 'description'].includes(c));
 
     if (nameCol) { insertCols.push(nameCol); insertVals.push(clientVal); placeholders.push('?'); }
     if (counselorCol) { insertCols.push(counselorCol); insertVals.push(counselorVal); placeholders.push('?'); }
