@@ -25,27 +25,38 @@ app.get('/api/appointments', async (req, res) => {
   }
 });
 
-// POST: Create appointment
+// POST: Create appointment with auto-column matching
 app.post('/api/appointments', async (req, res) => {
   try {
     const body = req.body;
-    const clientName = body.full_name || body.client_name || body.name || body.client || '';
-    const counselorName = body.counselor_name || body.counselor || body.doctor_name || body.doctor || '';
-    const phoneNumber = body.phone || body.phone_number || body.mobile || body.contact || '';
-    const appointmentTime = body.appointment_time || body.appointment_date || body.date_time || body.date || '';
-    const notesText = body.notes || body.message || '';
+    const clientVal = body.full_name || body.client_name || body.name || body.client || '';
+    const counselorVal = body.counselor_name || body.counselor || body.doctor_name || body.doctor || '';
+    const phoneVal = body.phone || body.phone_number || body.mobile || body.contact || '';
+    const timeVal = body.appointment_time || body.appointment_date || body.date_time || body.date || '';
+    const notesVal = body.notes || body.message || '';
 
-    if (!clientName) {
-      return res.status(400).json({ error: "Client name is required" });
-    }
+    // Inspect database columns dynamically to avoid 'Unknown column' errors
+    const [columns] = await db.query(`SHOW COLUMNS FROM appointments`);
+    const colNames = columns.map(c => c.Field);
 
-    // Dynamic insert query matching common MySQL column layouts
-    const query = `
-      INSERT INTO appointments (name, counselor, phone, appointment_time, notes)
-      VALUES (?, ?, ?, ?, ?)
-    `;
+    let clientCol = colNames.find(c => ['client_name', 'full_name', 'name', 'client', 'patient_name'].includes(c)) || colNames[1];
+    let counselorCol = colNames.find(c => ['counselor_name', 'counselor', 'doctor_name', 'doctor'].includes(c));
+    let phoneCol = colNames.find(c => ['phone', 'phone_number', 'mobile', 'contact'].includes(c));
+    let timeCol = colNames.find(c => ['appointment_time', 'appointment_date', 'date_time', 'date'].includes(c));
+    let notesCol = colNames.find(c => ['notes', 'message', 'description'].includes(c));
 
-    const [result] = await db.query(query, [clientName, counselorName, phoneNumber, appointmentTime, notesText]);
+    let insertCols = [clientCol];
+    let insertVals = [clientVal];
+    let placeholders = ['?'];
+
+    if (counselorCol) { insertCols.push(counselorCol); insertVals.push(counselorVal); placeholders.push('?'); }
+    if (phoneCol) { insertCols.push(phoneCol); insertVals.push(phoneVal); placeholders.push('?'); }
+    if (timeCol) { insertCols.push(timeCol); insertVals.push(timeVal); placeholders.push('?'); }
+    if (notesCol) { insertCols.push(notesCol); insertVals.push(notesVal); placeholders.push('?'); }
+
+    const query = `INSERT INTO appointments (${insertCols.join(', ')}) VALUES (${placeholders.join(', ')})`;
+    const [result] = await db.query(query, insertVals);
+
     res.status(201).json({ message: "Appointment booked successfully!", id: result.insertId });
   } catch (err) {
     console.error("Database Insert Error:", err);
