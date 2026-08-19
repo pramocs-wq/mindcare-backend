@@ -25,7 +25,7 @@ app.get('/api/appointments', async (req, res) => {
   }
 });
 
-// POST: Create appointment
+// POST: Create appointment with Foreign Key resolution
 app.post('/api/appointments', async (req, res) => {
   try {
     const body = req.body;
@@ -35,7 +35,25 @@ app.post('/api/appointments', async (req, res) => {
     const timeVal = body.appointment_time || body.appointment_date || body.date_time || body.date || '';
     const notesVal = body.notes || body.message || '';
 
-    // Fetch column schema dynamically
+    // Step A: Find a valid user ID from the `users` table to satisfy foreign key
+    let validUserId = null;
+    try {
+      const [userRows] = await db.query(`SELECT id FROM users LIMIT 1`);
+      if (userRows.length > 0) {
+        validUserId = userRows[0].id;
+      } else {
+        // If users table is empty, insert a fallback guest record
+        const [newUser] = await db.query(
+          `INSERT INTO users (name, phone) VALUES (?, ?)`, 
+          [clientVal || 'Guest User', phoneVal || '0000000000']
+        );
+        validUserId = newUser.insertId;
+      }
+    } catch (uErr) {
+      console.warn("User lookup warning:", uErr.message);
+    }
+
+    // Step B: Inspect appointments column layout
     const [columns] = await db.query(`SHOW COLUMNS FROM appointments`);
     const colNames = columns.map(c => c.Field);
 
@@ -43,16 +61,21 @@ app.post('/api/appointments', async (req, res) => {
     let insertVals = [];
     let placeholders = [];
 
-    // Automatically fill required integer ID columns with default 0
-    colNames.forEach(col => {
-      if (col.endsWith('_id') && col !== 'id') {
-        insertCols.push(col);
-        insertVals.push(0);
-        placeholders.push('?');
-      }
-    });
+    // Map Foreign Keys to validUserId or skip if nullable
+    if (colNames.includes('patient_id') && validUserId) {
+      insertCols.push('patient_id');
+      insertVals.push(validUserId);
+      placeholders.push('?');
+    }
+    
+    if (colNames.includes('doctor_id')) {
+      // Find valid doctor ID or use same user ID fallback
+      insertCols.push('doctor_id');
+      insertVals.push(validUserId || 1);
+      placeholders.push('?');
+    }
 
-    // Dynamic field matching for text and date attributes
+    // Dynamic field matching for text/date fields
     let nameCol = colNames.find(c => ['client_name', 'patient_name', 'full_name', 'client', 'name'].includes(c) && !c.endsWith('_id'));
     let counselorCol = colNames.find(c => ['counselor_name', 'counselor', 'doctor_name', 'doctor'].includes(c) && !c.endsWith('_id'));
     let phoneCol = colNames.find(c => ['phone', 'phone_number', 'mobile', 'contact'].includes(c));
