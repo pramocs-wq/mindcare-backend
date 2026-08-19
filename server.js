@@ -13,28 +13,35 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// GET: Standardize returned keys so admin.html reads values instantly
+// GET: Fetch appointments with direct database column debugging
 app.get('/api/appointments', async (req, res) => {
   try {
     const [rows] = await db.query(`SELECT * FROM appointments ORDER BY id DESC`);
     
-    // Check if a users table exists for name lookups
+    // Debugging: Log row structure in Render logs
+    if (rows.length > 0) {
+      console.log("Raw appointment row keys from DB:", Object.keys(rows[0]));
+      console.log("Sample row data:", rows[0]);
+    }
+
+    // Try fetching users if users table exists
     let usersMap = {};
     try {
       const [uRows] = await db.query(`SELECT * FROM users`);
       uRows.forEach(u => { usersMap[u.id] = u; });
     } catch (e) {
-      // Ignore if users table doesn't exist
+      console.log("No users table or error reading users:", e.message);
     }
 
+    // Map rows safely using all possible column names
     const standardized = rows.map(app => {
-      // Extract linked user if patient_id exists
-      const linkedUser = app.patient_id ? usersMap[app.patient_id] : null;
+      const u = app.patient_id ? usersMap[app.patient_id] : null;
 
-      const clientName = app.client_name || app.patient_name || app.full_name || app.client || app.name || (linkedUser ? linkedUser.name : null) || 'N/A';
-      const phone = app.phone || app.phone_number || app.mobile || app.contact || (linkedUser ? linkedUser.phone : null) || 'N/A';
-      const counselor = app.counselor_name || app.counselor || app.doctor_name || app.doctor || 'N/A';
-      const rawDate = app.appointment_time || app.appointment_date || app.date_time || app.date || '';
+      // Search all possible property keys
+      const clientName = app.full_name || app.client_name || app.patient_name || app.name || app.client || (u ? u.name || u.full_name || u.username : null) || 'Guest Patient';
+      const phone = app.phone || app.phone_number || app.mobile || app.contact || (u ? u.phone || u.mobile : null) || 'N/A';
+      const counselor = app.counselor_name || app.counselor || app.doctor_name || app.doctor || 'Mindcare Counselor';
+      const rawDate = app.appointment_time || app.appointment_date || app.date_time || app.date || app.created_at || '';
       const notes = app.notes || app.message || app.description || '';
 
       return {
@@ -73,8 +80,10 @@ app.post('/api/appointments', async (req, res) => {
       );
       validUserId = uInsert.insertId || 1;
     } catch (uErr) {
-      const [uRows] = await db.query(`SELECT id FROM users LIMIT 1`);
-      if (uRows.length > 0) validUserId = uRows[0].id;
+      try {
+        const [uRows] = await db.query(`SELECT id FROM users LIMIT 1`);
+        if (uRows.length > 0) validUserId = uRows[0].id;
+      } catch(e){}
     }
 
     // Step 2: Map columns dynamically
