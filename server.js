@@ -4,7 +4,6 @@ const db = require('./db');
 
 const app = express();
 
-// Explicit CORS setup
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
@@ -29,14 +28,15 @@ app.get('/api/appointments', async (req, res) => {
 // POST: Create appointment
 app.post('/api/appointments', async (req, res) => {
   try {
-    const full_name = req.body.full_name || req.body.client_name || req.body.name;
-    const counselor_name = req.body.counselor_name || req.body.counselor;
-    const phone = req.body.phone || req.body.phone_number;
-    const appointment_time = req.body.appointment_time || req.body.appointment_date || req.body.date_time || req.body.date;
-    const notes = req.body.notes || '';
+    const body = req.body;
+    const full_name = body.full_name || body.client_name || body.name || body.client;
+    const counselor_name = body.counselor_name || body.counselor || body.doctor_name || body.doctor;
+    const phone = body.phone || body.phone_number || body.mobile || body.contact;
+    const appointment_time = body.appointment_time || body.appointment_date || body.date_time || body.date;
+    const notes = body.notes || body.message || '';
 
     if (!full_name) {
-      return res.status(400).json({ error: "Column 'full_name' cannot be null" });
+      return res.status(400).json({ error: "Client name is required" });
     }
 
     const query = `
