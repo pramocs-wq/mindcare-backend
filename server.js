@@ -13,36 +13,29 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// GET: Fetch appointments with direct database column debugging
+// GET: Return distinct client, phone, and counselor values
 app.get('/api/appointments', async (req, res) => {
   try {
     const [rows] = await db.query(`SELECT * FROM appointments ORDER BY id DESC`);
-    
-    // Debugging: Log row structure in Render logs
-    if (rows.length > 0) {
-      console.log("Raw appointment row keys from DB:", Object.keys(rows[0]));
-      console.log("Sample row data:", rows[0]);
-    }
 
-    // Try fetching users if users table exists
+    // Fetch user map if users table exists
     let usersMap = {};
     try {
       const [uRows] = await db.query(`SELECT * FROM users`);
       uRows.forEach(u => { usersMap[u.id] = u; });
-    } catch (e) {
-      console.log("No users table or error reading users:", e.message);
-    }
+    } catch (e) {}
 
-    // Map rows safely using all possible column names
     const standardized = rows.map(app => {
-      const u = app.patient_id ? usersMap[app.patient_id] : null;
+      // Find patient user record
+      const patientUser = app.patient_id ? usersMap[app.patient_id] : null;
+      const doctorUser = app.doctor_id ? usersMap[app.doctor_id] : null;
 
-      // Search all possible property keys
-      const clientName = app.full_name || app.client_name || app.patient_name || app.name || app.client || (u ? u.name || u.full_name || u.username : null) || 'Guest Patient';
-      const phone = app.phone || app.phone_number || app.mobile || app.contact || (u ? u.phone || u.mobile : null) || 'N/A';
-      const counselor = app.counselor_name || app.counselor || app.doctor_name || app.doctor || 'Mindcare Counselor';
-      const rawDate = app.appointment_time || app.appointment_date || app.date_time || app.date || app.created_at || '';
-      const notes = app.notes || app.message || app.description || '';
+      // Prioritize explicit text columns first, then linked user table fallback
+      const clientName = app.client_name || app.full_name || app.patient_name || (patientUser ? patientUser.name : null) || app.name || 'N/A';
+      const phone = app.phone || app.phone_number || app.mobile || app.contact || (patientUser ? patientUser.phone : null) || 'N/A';
+      const counselor = app.counselor_name || app.counselor || (doctorUser ? doctorUser.name : null) || app.doctor || app.doctor_name || 'Mindcare Counselor';
+      const rawDate = app.appointment_time || app.appointment_date || app.date_time || app.date || '';
+      const notes = app.notes || app.message || '';
 
       return {
         id: app.id,
@@ -61,32 +54,31 @@ app.get('/api/appointments', async (req, res) => {
   }
 });
 
-// POST: Save appointment
+// POST: Save distinct user (client) and appointment fields
 app.post('/api/appointments', async (req, res) => {
   try {
     const body = req.body;
-    const clientVal = body.full_name || body.client_name || body.name || body.client || '';
-    const counselorVal = body.counselor_name || body.counselor || body.doctor_name || body.doctor || '';
-    const phoneVal = body.phone || body.phone_number || body.mobile || body.contact || '';
-    const timeVal = body.appointment_time || body.appointment_date || body.date_time || body.date || '';
+    const clientVal = body.full_name || body.client_name || body.name || '';
+    const counselorVal = body.counselor_name || body.counselor || '';
+    const phoneVal = body.phone || body.phone_number || body.mobile || '';
+    const timeVal = body.appointment_time || body.appointment_date || body.date_time || '';
     const notesVal = body.notes || body.message || '';
 
-    // Step 1: Manage linked user
-    let validUserId = 1;
+    // Step 1: Create/Update patient record in users table with actual client details
+    let validUserId = null;
     try {
-      const [uInsert] = await db.query(
-        `INSERT INTO users (name, phone) VALUES (?, ?) ON DUPLICATE KEY UPDATE name=VALUES(name), phone=VALUES(phone)`,
-        [clientVal || 'Guest User', phoneVal || '']
-      );
-      validUserId = uInsert.insertId || 1;
+      if (clientVal) {
+        const [uInsert] = await db.query(
+          `INSERT INTO users (name, phone) VALUES (?, ?) ON DUPLICATE KEY UPDATE phone=VALUES(phone)`,
+          [clientVal, phoneVal]
+        );
+        validUserId = uInsert.insertId;
+      }
     } catch (uErr) {
-      try {
-        const [uRows] = await db.query(`SELECT id FROM users LIMIT 1`);
-        if (uRows.length > 0) validUserId = uRows[0].id;
-      } catch(e){}
+      console.warn("User table insert warning:", uErr.message);
     }
 
-    // Step 2: Map columns dynamically
+    // Step 2: Get table structure to assign parameters dynamically
     const [columns] = await db.query(`SHOW COLUMNS FROM appointments`);
     const colNames = columns.map(c => c.Field);
 
@@ -94,29 +86,39 @@ app.post('/api/appointments', async (req, res) => {
     let insertVals = [];
     let placeholders = [];
 
-    if (colNames.includes('patient_id')) {
-      insertCols.push('patient_id');
-      insertVals.push(validUserId);
-      placeholders.push('?');
+    // Helper to push values safely
+    const addCol = (col, val) => {
+      if (colNames.includes(col)) {
+        insertCols.push(col);
+        insertVals.push(val);
+        placeholders.push('?');
+      }
+    };
+
+    if (validUserId) addCol('patient_id', validUserId);
+
+    // Save direct text fields into matching database columns
+    addCol('full_name', clientVal);
+    addCol('client_name', clientVal);
+    addCol('patient_name', clientVal);
+    
+    addCol('phone', phoneVal);
+    addCol('phone_number', phoneVal);
+    addCol('mobile', phoneVal);
+
+    addCol('counselor_name', counselorVal);
+    addCol('counselor', counselorVal);
+    addCol('doctor_name', counselorVal);
+
+    addCol('appointment_time', timeVal);
+    addCol('appointment_date', timeVal);
+
+    addCol('notes', notesVal);
+    addCol('message', notesVal);
+
+    if (insertCols.length === 0) {
+      return res.status(400).json({ error: "No matching database columns found" });
     }
-
-    if (colNames.includes('doctor_id')) {
-      insertCols.push('doctor_id');
-      insertVals.push(1);
-      placeholders.push('?');
-    }
-
-    let nameCol = colNames.find(c => ['client_name', 'patient_name', 'full_name', 'client', 'name'].includes(c) && !c.endsWith('_id'));
-    let counselorCol = colNames.find(c => ['counselor_name', 'counselor', 'doctor_name', 'doctor'].includes(c) && !c.endsWith('_id'));
-    let phoneCol = colNames.find(c => ['phone', 'phone_number', 'mobile', 'contact'].includes(c));
-    let timeCol = colNames.find(c => ['appointment_date', 'appointment_time', 'date_time', 'date'].includes(c));
-    let notesCol = colNames.find(c => ['notes', 'message', 'description'].includes(c));
-
-    if (nameCol) { insertCols.push(nameCol); insertVals.push(clientVal); placeholders.push('?'); }
-    if (counselorCol) { insertCols.push(counselorCol); insertVals.push(counselorVal); placeholders.push('?'); }
-    if (phoneCol) { insertCols.push(phoneCol); insertVals.push(phoneVal); placeholders.push('?'); }
-    if (timeCol) { insertCols.push(timeCol); insertVals.push(timeVal); placeholders.push('?'); }
-    if (notesCol) { insertCols.push(notesCol); insertVals.push(notesVal); placeholders.push('?'); }
 
     const query = `INSERT INTO appointments (${insertCols.join(', ')}) VALUES (${placeholders.join(', ')})`;
     const [result] = await db.query(query, insertVals);
