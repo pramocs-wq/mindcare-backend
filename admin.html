@@ -1,56 +1,98 @@
 <script>
-  // Add a timestamp query param to force-bypass API / CDN cache
-  const API_URL = "https://mindcare-backend-5bz1.onrender.com/api/appointments?v=" + new Date().getTime();
+  const API_URL = "https://mindcare-backend-5bz1.onrender.com/api/appointments";
+  let appointmentsData = [];
 
-  function parseDate(str) {
+  // Converts "16/09/2026, 07:30 am" into a sortable number timestamp
+  function getTimestamp(str) {
     if (!str) return 0;
-    // Parses "DD/MM/YYYY, HH:MM am/pm"
-    const match = str.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4}),?\s*(\d{1,2}):(\d{2})\s*(am|pm)$/i);
-    if (match) {
-      let [, d, m, y, h, min, pm] = match;
-      h = parseInt(h, 10);
-      if (pm.toLowerCase() === 'pm' && h < 12) h += 12;
-      if (pm.toLowerCase() === 'am' && h === 12) h = 0;
-      return new Date(y, m - 1, d, h, min).getTime();
+
+    // Clean whitespace
+    const cleanStr = str.trim();
+
+    // Split date part ("16/09/2026") and time part ("07:30 am")
+    const parts = cleanStr.split(',');
+    if (parts.length >= 2) {
+      const dateParts = parts[0].trim().split('/'); // [16, 09, 2026]
+      if (dateParts.length === 3) {
+        const day = dateParts[0].padStart(2, '0');
+        const month = dateParts[1].padStart(2, '0');
+        const year = dateParts[2];
+
+        const timeStr = parts[1].trim(); // "07:30 am"
+        const timeParts = timeStr.split(' ');
+        let [hours, minutes] = timeParts[0].split(':');
+        const ampm = timeParts[1] ? timeParts[1].toLowerCase() : '';
+
+        hours = parseInt(hours, 10);
+        if (ampm === 'pm' && hours < 12) hours += 12;
+        if (ampm === 'am' && hours === 12) hours = 0;
+
+        // Reconstruct into Standard ISO: YYYY-MM-DDTHH:MM:00
+        const isoString = `${year}-${month}-${day}T${String(hours).padStart(2, '0')}:${minutes}:00`;
+        return new Date(isoString).getTime() || 0;
+      }
     }
-    return new Date(str).getTime() || 0;
+
+    return new Date(cleanStr).getTime() || 0;
+  }
+
+  function renderTable(data) {
+    const tableBody = document.getElementById("appointmentsTable");
+    const totalCount = document.getElementById("totalCount");
+
+    totalCount.innerText = `Total Appointments: ${data.length}`;
+
+    if (data.length === 0) {
+      tableBody.innerHTML = `<tr><td colspan="7">No appointments found.</td></tr>`;
+      return;
+    }
+
+    // STRICT DATE SORTING: NEWEST (Furthest future date) FIRST
+    const sortedData = [...data].sort((a, b) => {
+      return getTimestamp(b.appointment_time) - getTimestamp(a.appointment_time);
+    });
+
+    tableBody.innerHTML = sortedData.map(app => `
+      <tr>
+        <td>${app.id}</td>
+        <td><strong>${app.appointment_time || 'N/A'}</strong></td>
+        <td>${app.client_name || 'N/A'}</td>
+        <td>${app.phone || 'N/A'}</td>
+        <td>${app.counselor_name || 'N/A'}</td>
+        <td>${app.notes || ''}</td>
+        <td>
+          <button class="delete-btn" onclick="deleteAppointment(${app.id})">Delete</button>
+        </td>
+      </tr>
+    `).join('');
   }
 
   async function fetchAppointments() {
     const tableBody = document.getElementById("appointmentsTable");
-    const totalCount = document.getElementById("totalCount");
 
     try {
-      const res = await fetch(API_URL);
-      const data = await res.json();
-
-      // SORT INLINE BEFORE RENDER (Newest First)
-      data.sort((a, b) => parseDate(b.appointment_time) - parseDate(a.appointment_time));
-
-      totalCount.innerText = `Total Appointments: ${data.length}`;
-
-      if (data.length === 0) {
-        tableBody.innerHTML = `<tr><td colspan="7">No appointments found.</td></tr>`;
-        return;
-      }
-
-      tableBody.innerHTML = data.map(app => `
-        <tr>
-          <td>${app.id}</td>
-          <td><strong>${app.appointment_time || 'N/A'}</strong></td>
-          <td>${app.client_name || 'N/A'}</td>
-          <td>${app.phone || 'N/A'}</td>
-          <td>${app.counselor_name || 'N/A'}</td>
-          <td>${app.notes || ''}</td>
-          <td>
-            <button class="delete-btn" onclick="deleteAppointment(${app.id})">Delete</button>
-          </td>
-        </tr>
-      `).join('');
+      // Bypasses browser cache by adding ?t=timestamp
+      const res = await fetch(`${API_URL}?t=${new Date().getTime()}`);
+      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+      
+      appointmentsData = await res.json();
+      renderTable(appointmentsData);
 
     } catch (err) {
-      console.error(err);
-      tableBody.innerHTML = `<tr><td colspan="7" style="color: red;">Failed to load data.</td></tr>`;
+      console.error("Error fetching data:", err);
+      tableBody.innerHTML = `<tr><td colspan="7" style="color: red;">Failed to load appointments: ${err.message}</td></tr>`;
+    }
+  }
+
+  async function deleteAppointment(id) {
+    if (!confirm(`Are you sure you want to delete appointment #${id}?`)) return;
+
+    try {
+      const res = await fetch(`${API_URL}/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error("Delete failed");
+      fetchAppointments();
+    } catch (err) {
+      alert(`Error deleting appointment: ${err.message}`);
     }
   }
 
