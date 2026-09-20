@@ -1,108 +1,40 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Admin Dashboard - Mindcare</title>
-  <style>
-    body { font-family: Arial, sans-serif; background: #f4f6f9; padding: 20px; }
-    .container { max-width: 1000px; margin: 0 auto; background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-    .header-container { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-    .header-container h2 { margin: 0; color: #333; }
-    .logo { max-height: 50px; width: auto; }
-    .btn { padding: 8px 16px; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; color: white; background: #007bff; }
-    .btn:hover { background: #0056b3; }
-    
-    table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; font-size: 14px; }
-    th { background: #007bff; color: white; }
-    tr:nth-child(even) { background-color: #f9f9f9; }
-    
-    .delete-btn { padding: 6px 12px; background: #d9534f; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; }
-    .delete-btn:hover { background: #c9302c; }
-    .count-badge { font-weight: bold; margin-bottom: 10px; display: block; color: #333; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header-container">
-      <div style="display: flex; align-items: center; gap: 15px;">
-        <img src="logo.png" alt="Mindcare Logo" class="logo">
-        <h2>Booked Appointments Dashboard</h2>
-      </div>
-      <button class="btn" onclick="fetchAppointments()">Refresh Data</button>
-    </div>
+<script>
+  // Add a timestamp query param to force-bypass API / CDN cache
+  const API_URL = "https://mindcare-backend-5bz1.onrender.com/api/appointments?v=" + new Date().getTime();
 
-    <span class="count-badge" id="totalCount">Total Appointments: 0</span>
-
-    <table>
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Date & Time</th>
-          <th>Client Name</th>
-          <th>Phone</th>
-          <th>Counselor</th>
-          <th>Notes</th>
-          <th>Action</th>
-        </tr>
-      </thead>
-      <tbody id="appointmentsTable">
-        <tr><td colspan="7">Loading appointments...</td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <script>
-    const API_URL = "https://mindcare-backend-5bz1.onrender.com";
-    let appointmentsData = [];
-
-    // Helper to safely convert "DD/MM/YYYY, HH:MM am/pm" into a numeric timestamp
-    function parseCustomDateString(dateStr) {
-      if (!dateStr || typeof dateStr !== 'string') return 0;
-
-      // Extract parts using regular expression
-      const match = dateStr.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4}),?\s*(\d{1,2}):(\d{2})\s*(am|pm)$/i);
-      
-      if (match) {
-        let [, day, month, year, hours, minutes, modifier] = match;
-        hours = parseInt(hours, 10);
-        
-        if (modifier.toLowerCase() === 'pm' && hours < 12) hours += 12;
-        if (modifier.toLowerCase() === 'am' && hours === 12) hours = 0;
-
-        return new Date(
-          parseInt(year, 10),
-          parseInt(month, 10) - 1, // Months are 0-indexed in JS
-          parseInt(day, 10),
-          hours,
-          parseInt(minutes, 10)
-        ).getTime();
-      }
-
-      // Fallback for standard ISO string formats
-      return new Date(dateStr).getTime() || 0;
+  function parseDate(str) {
+    if (!str) return 0;
+    // Parses "DD/MM/YYYY, HH:MM am/pm"
+    const match = str.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4}),?\s*(\d{1,2}):(\d{2})\s*(am|pm)$/i);
+    if (match) {
+      let [, d, m, y, h, min, pm] = match;
+      h = parseInt(h, 10);
+      if (pm.toLowerCase() === 'pm' && h < 12) h += 12;
+      if (pm.toLowerCase() === 'am' && h === 12) h = 0;
+      return new Date(y, m - 1, d, h, min).getTime();
     }
+    return new Date(str).getTime() || 0;
+  }
 
-    function renderTable() {
-      const tableBody = document.getElementById("appointmentsTable");
-      const totalCount = document.getElementById("totalCount");
+  async function fetchAppointments() {
+    const tableBody = document.getElementById("appointmentsTable");
+    const totalCount = document.getElementById("totalCount");
 
-      totalCount.innerText = `Total Appointments: ${appointmentsData.length}`;
+    try {
+      const res = await fetch(API_URL);
+      const data = await res.json();
 
-      if (appointmentsData.length === 0) {
+      // SORT INLINE BEFORE RENDER (Newest First)
+      data.sort((a, b) => parseDate(b.appointment_time) - parseDate(a.appointment_time));
+
+      totalCount.innerText = `Total Appointments: ${data.length}`;
+
+      if (data.length === 0) {
         tableBody.innerHTML = `<tr><td colspan="7">No appointments found.</td></tr>`;
         return;
       }
 
-      // Sort by Date & Time: NEWEST / LATEST FIRST (Descending)
-      const sorted = [...appointmentsData].sort((a, b) => {
-        const timeA = parseCustomDateString(a.appointment_time);
-        const timeB = parseCustomDateString(b.appointment_time);
-        return timeB - timeA;
-      });
-
-      tableBody.innerHTML = sorted.map(app => `
+      tableBody.innerHTML = data.map(app => `
         <tr>
           <td>${app.id}</td>
           <td><strong>${app.appointment_time || 'N/A'}</strong></td>
@@ -115,37 +47,12 @@
           </td>
         </tr>
       `).join('');
+
+    } catch (err) {
+      console.error(err);
+      tableBody.innerHTML = `<tr><td colspan="7" style="color: red;">Failed to load data.</td></tr>`;
     }
+  }
 
-    async function fetchAppointments() {
-      const tableBody = document.getElementById("appointmentsTable");
-
-      try {
-        const res = await fetch(`${API_URL}/api/appointments`);
-        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-        
-        appointmentsData = await res.json();
-        renderTable();
-
-      } catch (err) {
-        console.error("Error fetching data:", err);
-        tableBody.innerHTML = `<tr><td colspan="7" style="color: red;">Failed to load appointments: ${err.message}</td></tr>`;
-      }
-    }
-
-    async function deleteAppointment(id) {
-      if (!confirm(`Are you sure you want to delete appointment #${id}?`)) return;
-
-      try {
-        const res = await fetch(`${API_URL}/api/appointments/${id}`, { method: 'DELETE' });
-        if (!res.ok) throw new Error("Delete failed");
-        fetchAppointments();
-      } catch (err) {
-        alert(`Error deleting appointment: ${err.message}`);
-      }
-    }
-
-    fetchAppointments();
-  </script>
-</body>
-</html>
+  fetchAppointments();
+</script>
