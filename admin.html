@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Dashboard - Mindcare</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f4f6f9; padding: 20px; }
+    .container { max-width: 1000px; margin: 0 auto; background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    .header-container { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .header-container h2 { margin: 0; color: #333; }
+    .logo { max-height: 50px; width: auto; }
+    .controls { display: flex; gap: 10px; align-items: center; }
+    .btn { padding: 8px 16px; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; color: white; }
+    .refresh-btn { background: #007bff; }
+    .refresh-btn:hover { background: #0056b3; }
+    .sort-btn { background: #6c757d; }
+    .sort-btn:hover { background: #5a6268; }
+    
+    table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; font-size: 14px; }
+    th { background: #007bff; color: white; }
+    tr:nth-child(even) { background-color: #f9f9f9; }
+    
+    .delete-btn { padding: 6px 12px; background: #d9534f; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; }
+    .delete-btn:hover { background: #c9302c; }
+    .count-badge { font-weight: bold; margin-bottom: 10px; display: block; color: #333; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header-container">
+      <div style="display: flex; align-items: center; gap: 15px;">
+        <img src="logo.png" alt="Mindcare Logo" class="logo">
+        <h2>Booked Appointments Dashboard</h2>
+      </div>
+      <div class="controls">
+        <button class="btn sort-btn" id="sortToggleBtn" onclick="toggleSortOrder()">Date Order: Ascending (Earliest First)</button>
+        <button class="btn refresh-btn" onclick="fetchAppointments()">Refresh Data</button>
+      </div>
+    </div>
+
+    <span class="count-badge" id="totalCount">Total Appointments: 0</span>
+
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Date & Time</th>
+          <th>Client Name</th>
+          <th>Phone</th>
+          <th>Counselor</th>
+          <th>Notes</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="appointmentsTable">
+        <tr><td colspan="7">Loading appointments...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    const API_URL = "https://mindcare-backend-5bz1.onrender.com";
+    let appointmentsData = [];
+    let isAscending = true;
+
+    // Convert raw date string into a numeric timestamp for sorting
+    function parseToTimestamp(dateStr) {
+      if (!dateStr) return 0;
+      let clean = String(dateStr).trim().replace('T', ' ').replace('Z', '');
+      let parts = clean.split(' ');
+
+      if (parts[0].includes('/')) {
+        let dateParts = parts[0].split('/');
+        if (dateParts.length === 3) {
+          let day = dateParts[0];
+          let month = dateParts[1];
+          let year = dateParts[2];
+          let time = parts.slice(1).join(' ') || '00:00:00';
+          return new Date(`${year}-${month}-${day} ${time}`).getTime() || 0;
+        }
+      }
+      return new Date(clean).getTime() || 0;
+    }
+
+    function formatDisplayDate(dateStr) {
+      if (!dateStr) return "N/A";
+      let clean = String(dateStr).replace('T', ' ').replace('Z', '');
+      let parts = clean.split(' ');
+      if (parts.length < 2) return dateStr;
+
+      let dateParts = parts[0].split(parts[0].includes('/') ? '/' : '-');
+      let timeParts = parts[1].split(':');
+
+      if (dateParts.length < 3 || timeParts.length < 2) return dateStr;
+
+      let day, month, year;
+      if (parts[0].includes('/')) {
+        day = dateParts[0];
+        month = dateParts[1];
+        year = dateParts[2];
+      } else {
+        day = dateParts[2];
+        month = dateParts[1];
+        year = dateParts[0];
+      }
+
+      let hours = parseInt(timeParts[0], 10);
+      let minutes = timeParts[1];
+
+      let ampm = hours >= 12 ? 'pm' : 'am';
+      hours = hours % 12;
+      hours = hours ? hours : 12;
+      let formattedHours = hours < 10 ? '0' + hours : hours;
+
+      return `${day}/${month}/${year}, ${formattedHours}:${minutes} ${ampm}`;
+    }
+
+    function renderTable() {
+      const tableBody = document.getElementById("appointmentsTable");
+      const totalCount = document.getElementById("totalCount");
+
+      totalCount.innerText = `Total Appointments: ${appointmentsData.length}`;
+
+      if (appointmentsData.length === 0) {
+        tableBody.innerHTML = `<tr><td colspan="7">No appointments found.</td></tr>`;
+        return;
+      }
+
+      // Sort by date timestamp
+      const sorted = [...appointmentsData].sort((a, b) => {
+        let timeA = parseToTimestamp(a.appointment_time);
+        let timeB = parseToTimestamp(b.appointment_time);
+        return isAscending ? (timeA - timeB) : (timeB - timeA);
+      });
+
+      tableBody.innerHTML = sorted.map(app => `
+        <tr>
+          <td>${app.id}</td>
+          <td><strong>${formatDisplayDate(app.appointment_time)}</strong></td>
+          <td>${app.client_name}</td>
+          <td>${app.phone}</td>
+          <td>${app.counselor_name}</td>
+          <td>${app.notes || ''}</td>
+          <td>
+            <button class="delete-btn" onclick="deleteAppointment(${app.id})">Delete</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function toggleSortOrder() {
+      isAscending = !isAscending;
+      const btn = document.getElementById("sortToggleBtn");
+      btn.innerText = isAscending ? "Date Order: Ascending (Earliest First)" : "Date Order: Descending (Latest First)";
+      renderTable();
+    }
+
+    async function fetchAppointments() {
+      const tableBody = document.getElementById("appointmentsTable");
+
+      try {
+        const res = await fetch(`${API_URL}/api/appointments`);
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+        
+        appointmentsData = await res.json();
+        renderTable();
+
+      } catch (err) {
+        console.error("Error fetching data:", err);
+        tableBody.innerHTML = `<tr><td colspan="7" style="color: red;">Failed to load appointments: ${err.message}</td></tr>`;
+      }
+    }
+
+    async function deleteAppointment(id) {
+      if (!confirm(`Are you sure you want to delete appointment #${id}?`)) return;
+
+      try {
+        const res = await fetch(`${API_URL}/api/appointments/${id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error("Delete failed");
+        fetchAppointments();
+      } catch (err) {
+        alert(`Error deleting appointment: ${err.message}`);
+      }
+    }
+
+    fetchAppointments();
+  </script>
+</body>
+</html>
