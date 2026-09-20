@@ -57,35 +57,30 @@
     const API_URL = "https://mindcare-backend-5bz1.onrender.com";
     let appointmentsData = [];
 
-    // Converts "DD/MM/YYYY, HH:MM am/pm" into a numeric timestamp
-    function parseDateToTimestamp(dateStr) {
-      if (!dateStr) return 0;
+    // Helper to safely convert "DD/MM/YYYY, HH:MM am/pm" into a numeric timestamp
+    function parseCustomDateString(dateStr) {
+      if (!dateStr || typeof dateStr !== 'string') return 0;
 
-      if (dateStr.includes('-')) {
-        return new Date(dateStr).getTime() || 0;
+      // Extract parts using regular expression
+      const match = dateStr.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4}),?\s*(\d{1,2}):(\d{2})\s*(am|pm)$/i);
+      
+      if (match) {
+        let [, day, month, year, hours, minutes, modifier] = match;
+        hours = parseInt(hours, 10);
+        
+        if (modifier.toLowerCase() === 'pm' && hours < 12) hours += 12;
+        if (modifier.toLowerCase() === 'am' && hours === 12) hours = 0;
+
+        return new Date(
+          parseInt(year, 10),
+          parseInt(month, 10) - 1, // Months are 0-indexed in JS
+          parseInt(day, 10),
+          hours,
+          parseInt(minutes, 10)
+        ).getTime();
       }
 
-      const parts = dateStr.split(',');
-      if (parts.length >= 2) {
-        const dateParts = parts[0].trim().split('/');
-        if (dateParts.length === 3) {
-          const day = dateParts[0];
-          const month = dateParts[1];
-          const year = dateParts[2];
-
-          let timeStr = parts[1].trim();
-          let [time, modifier] = timeStr.split(' ');
-          let [hours, minutes] = time.split(':');
-
-          hours = parseInt(hours, 10);
-          if (modifier && modifier.toLowerCase() === 'pm' && hours < 12) hours += 12;
-          if (modifier && modifier.toLowerCase() === 'am' && hours === 12) hours = 0;
-
-          const formattedIso = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T${String(hours).padStart(2, '0')}:${minutes.padStart(2, '0')}:00`;
-          return new Date(formattedIso).getTime() || 0;
-        }
-      }
-
+      // Fallback for standard ISO string formats
       return new Date(dateStr).getTime() || 0;
     }
 
@@ -100,9 +95,11 @@
         return;
       }
 
-      // NEWEST DATES FIRST (Descending order)
+      // Sort by Date & Time: NEWEST / LATEST FIRST (Descending)
       const sorted = [...appointmentsData].sort((a, b) => {
-        return parseDateToTimestamp(b.appointment_time) - parseDateToTimestamp(a.appointment_time);
+        const timeA = parseCustomDateString(a.appointment_time);
+        const timeB = parseCustomDateString(b.appointment_time);
+        return timeB - timeA;
       });
 
       tableBody.innerHTML = sorted.map(app => `
